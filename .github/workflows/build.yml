@@ -1,0 +1,77 @@
+name: Build & Release Dify Plugin
+
+on:
+  # ✅ 方式1：打 tag 自动发布
+  push:
+    tags:
+      - "v*"
+
+  # ✅ 方式2：手动触发 + 输入版本号
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (e.g. v1.0.0)"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install dify-plugin
+
+      - name: 📚 Install project deps
+        run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # 🔥 关键：决定版本号
+      - name: 🏷 Determine version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_ENV
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          fi
+
+      # 🏗 打包
+      - name: 🏗 Build plugin
+        run: |
+          python -m dify_plugin package
+
+      # 🔍 Debug（可选）
+      - name: 🔍 Check dist
+        run: ls -lah dist
+
+      # 📦 上传构建产物（无论是否 release）
+      - name: 📤 Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dify-plugin-${{ env.VERSION }}
+          path: |
+            dist/*.difypkg
+            dist/*.difybndl
+
+      # 🚀 只有 tag 或手动触发才发布
+      - name: 🚀 Create Release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: Release ${{ env.VERSION }}
+          files: |
+            dist/*.difypkg
+            dist/*.difybndl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
