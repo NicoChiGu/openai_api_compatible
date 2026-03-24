@@ -206,7 +206,8 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         try:
             response = requests.post(
                 endpoint_url, headers=headers, json=data,
-                timeout=self._VALIDATE_TIMEOUT,
+                #timeout=self._VALIDATE_TIMEOUT,
+                timeout=self._get_timeout(credentials)
             )
             if response.status_code != 200:
                 self._raise_credentials_error(response)
@@ -216,11 +217,43 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
             raise CredentialsValidateFailedError(
                 f"An error occurred during credentials validation: {ex!s}"
             ) from ex
+            
+    def _get_timeout(self, credentials: dict) -> tuple[int, int]:
+        connect_timeout = int(credentials.get("connect_timeout", 10) or 10)
+        read_timeout = int(credentials.get("read_timeout", 300) or 300)
+        return (connect_timeout, read_timeout)
 
     def get_customizable_model_schema(
         self, model: str, credentials: Mapping | dict
     ) -> AIModelEntity:
         entity = super().get_customizable_model_schema(model, credentials)
+        
+        entity.parameter_rules.append(
+            ParameterRule(
+                name="connect_timeout",
+                label=I18nObject(en_US="Connect Timeout", zh_Hans="连接超时"),
+                help=I18nObject(
+                    en_US="Connection timeout in seconds.",
+                    zh_Hans="连接超时时间（秒）",
+                ),
+                type=ParameterType.NUMBER,
+                required=False,
+                )
+            )
+
+        entity.parameter_rules.append(
+            ParameterRule(
+                name="read_timeout",
+                label=I18nObject(en_US="Read Timeout", zh_Hans="读取超时"),
+                help=I18nObject(
+                    en_US="Read timeout in seconds.",
+                    zh_Hans="读取超时时间（秒）",
+                    ),
+                type=ParameterType.NUMBER,
+                required=False,
+                )
+            )
+        
 
         structured_output_support = credentials.get("structured_output_support", "not_supported")
         if structured_output_support == "supported":
