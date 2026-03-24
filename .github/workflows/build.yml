@@ -1,17 +1,22 @@
-name: Build & Release Dify Plugin
+name: Build Dify Plugin
 
 on:
-  # ✅ 方式1：打 tag 自动发布
   push:
     tags:
       - "v*"
-
-  # ✅ 方式2：手动触发 + 输入版本号
   workflow_dispatch:
     inputs:
       version:
         description: "Version (e.g. v1.0.0)"
         required: true
+      release:
+        description: "Publish to Release?"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
 
 jobs:
   build:
@@ -35,7 +40,7 @@ jobs:
         run: |
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # 🔥 关键：决定版本号
+      # 🏷 统一版本号来源
       - name: 🏷 Determine version
         id: vars
         run: |
@@ -47,14 +52,13 @@ jobs:
 
       # 🏗 打包
       - name: 🏗 Build plugin
-        run: |
-          python -m dify_plugin package
+        run: python -m dify_plugin package
 
-      # 🔍 Debug（可选）
+      # 🔍 Debug
       - name: 🔍 Check dist
         run: ls -lah dist
 
-      # 📦 上传构建产物（无论是否 release）
+      # 📦 上传构建产物（始终执行）
       - name: 📤 Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -63,9 +67,11 @@ jobs:
             dist/*.difypkg
             dist/*.difybndl
 
-      # 🚀 只有 tag 或手动触发才发布
+      # 🚀 条件发布 Release（核心）
       - name: 🚀 Create Release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        if: |
+          (github.event_name == 'push') ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
