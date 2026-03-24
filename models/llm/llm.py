@@ -25,7 +25,7 @@ from dify_plugin.errors.model import CredentialsValidateFailedError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 from openai import OpenAI
-
+import httpx
 
 class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
     # Pre-compiled regex for better performance
@@ -129,9 +129,10 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         if not endpoint_url:
             raise CredentialsValidateFailedError("Missing endpoint_url in credentials")
 
-        api_key = credentials.get("api_key")
-        extra_headers = credentials.get("extra_headers") or {}
-        client = OpenAI(api_key=api_key, base_url=endpoint_url, default_headers=extra_headers)
+        #api_key = credentials.get("api_key")
+        #extra_headers = credentials.get("extra_headers") or {}
+        #client = OpenAI(api_key=api_key, base_url=endpoint_url, default_headers=extra_headers)
+        client = self._build_openai_client(credentials)
 
         endpoint_model = credentials.get("endpoint_model_name") or model
         mode = credentials.get("mode", "chat")
@@ -222,6 +223,25 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         connect_timeout = int(credentials.get("connect_timeout", 10) or 10)
         read_timeout = int(credentials.get("read_timeout", 300) or 300)
         return (connect_timeout, read_timeout)
+    
+    def _build_openai_client(self, credentials: dict) -> OpenAI:
+        timeout = self._get_timeout(credentials)
+        api_key = credentials.get("api_key")
+        endpoint_url = credentials.get("endpoint_url")
+        extra_headers = credentials.get("extra_headers") or {}
+        return OpenAI(
+            api_key=api_key,
+            base_url=endpoint_url,
+            default_headers=extra_headers,
+            http_client=httpx.Client(
+                timeout=httpx.Timeout(
+                    connect=timeout[0],
+                    read=timeout[1],
+                    write=timeout[1],
+                    pool=timeout[0],
+                    )
+                )
+            )
 
     def get_customizable_model_schema(
         self, model: str, credentials: Mapping | dict
