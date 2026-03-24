@@ -52,7 +52,7 @@ jobs:
 
       # 🏗 打包
       - name: 🏗 Build plugin
-        run: python -m dify_plugin package
+        run: dify-plugin package
 
       # 🔍 Debug
       - name: 🔍 Check dist
