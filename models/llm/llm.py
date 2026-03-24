@@ -385,6 +385,21 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         # translates it into a standard OpenAI-compatible request by:
         # 1. Injecting the JSON schema directly into the system prompt to guide the model.
         # This ensures models like gpt-4o produce the correct structured output.
+        c_timeout = int(model_parameters.pop("connect_timeout", 10) or 10)
+        r_timeout = int(model_parameters.pop("read_timeout", 300) or 300)
+
+        # 转换 -1 为 None (requests 规范)
+        connect_timeout = None if c_timeout == -1 else c_timeout
+        read_timeout = None if r_timeout == -1 else r_timeout
+        
+        # 构造超时元组
+        timeout_tuple = (connect_timeout, read_timeout)
+
+        # 这里不使用 httpx，直接利用 openai 客户端的 timeout 属性
+        # OpenAI SDK 的 client 允许在调用时设置 timeout
+        if hasattr(self, 'client'):
+            self.client.timeout = timeout_tuple   
+        
         if model_parameters.get("response_format") == "json_schema":
             # Use .get() instead of .pop() for safety
             json_schema_str = model_parameters.get("json_schema")
