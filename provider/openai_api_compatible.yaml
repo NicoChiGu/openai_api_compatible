@@ -123,18 +123,6 @@ model_credential_schema:
           label:
             en_US: Chat
             zh_Hans: 对话
-    - name: connect_timeout
-      type: number
-      required: false
-      label:
-        en_US: Connect Timeout
-        zh_Hans: 连接超时
-    - name: read_timeout
-      type: number
-      required: false
-      label:
-        en_US: Read Timeout
-        zh_Hans: 读取超时
     - variable: context_size
       label:
         zh_Hans: 模型上下文长度
