@@ -24,9 +24,6 @@ from dify_plugin.entities.model.message import (
 from dify_plugin.errors.model import CredentialsValidateFailedError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
-from dify_plugin.entities.model import AIModelEntity
-from dify_plugin.entities.model.model import ModelFeature
-
 from openai import OpenAI
 
 
@@ -65,7 +62,7 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         return output, is_reasoning
 
     # Timeout for validation requests: (connect_timeout, read_timeout) in seconds
-    _VALIDATE_TIMEOUT = (10, 300)
+    _VALIDATE_TIMEOUT = (10, 3600)
 
     @staticmethod
     def _needs_max_completion_tokens(m: str) -> bool:
@@ -78,63 +75,6 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
             f"Credentials validation failed with status code {response.status_code} "
             f"and response body {response.text}"
         )
-        
-    def list_models(self, credentials: dict) -> list[AIModelEntity]:
-        """
-        实现此方法，使 Dify 能够列出 OpenAI 兼容接口中的所有模型
-        """
-        endpoint_url = credentials.get("endpoint_url")
-        api_key = credentials.get("api_key")
-        
-        # 1. 基础检查
-        if not endpoint_url or not api_key:
-            return []
-
-        # 确保 URL 正确
-        if not endpoint_url.endswith("/"):
-            endpoint_url += "/"
-            
-        try:
-            # 2. 调用 OpenAI 兼容的 /models 接口
-            # 注意：这里直接用 requests 简单快捷，也可以用你的 self.client
-            headers = {"Authorization": f"Bearer {api_key}"}
-            response = requests.get(
-                urljoin(endpoint_url, "models"), 
-                headers=headers, 
-                timeout=10
-            )
-            
-            if response.status_code != 200:
-                return []
-
-            models_data = response.json()
-            entities = []
-            
-            # 3. 转换成 Dify 需要的 AIModelEntity 格式
-            for m in models_data.get("data", []):
-                model_id = m.get("id")
-                entities.append(AIModelEntity(
-                    model=model_id,
-                    label=I18nObject(en_US=model_id, zh_Hans=model_id),
-                    # 这里你可以根据需要预设功能，或者保持通用
-                    features=[
-                        ModelFeature.AGENT_THOUGHT, 
-                        ModelFeature.TOOL_CALL,
-                        ModelFeature.STREAM_TOOL_CALL
-                    ]
-                ))
-            return entities
-
-        except Exception:
-            # 如果请求失败，尝试返回用户手动填写的那个模型名（保底逻辑）
-            manual_model = credentials.get("endpoint_model_name")
-            if manual_model:
-                return [AIModelEntity(
-                    model=manual_model,
-                    label=I18nObject(en_US=manual_model, zh_Hans=manual_model),
-                    features=[ModelFeature.AGENT_THOUGHT]
-                )]
-            return []
 
     def validate_credentials(self, model: str, credentials: dict) -> None:
         """Validate credentials with fallback handling for multiple error scenarios.
@@ -281,34 +221,6 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         self, model: str, credentials: Mapping | dict
     ) -> AIModelEntity:
         entity = super().get_customizable_model_schema(model, credentials)
-        
-        timeout_params = [
-            ParameterRule(
-                name="connect_timeout",
-                label=I18nObject(en_US="Connect Timeout", zh_Hans="连接超时"),
-                help=I18nObject(en_US="Seconds to wait for connection.", zh_Hans="建立连接的超时时间（秒）"),
-                type=ParameterType.NUMBER,
-                required=False,
-                default=10,
-                min=-1,
-                max=3600,
-            ),
-            ParameterRule(
-                name="read_timeout",
-                label=I18nObject(en_US="Read Timeout", zh_Hans="读取超时"),
-                help=I18nObject(en_US="Seconds to wait for response content.", zh_Hans="等待模型返回内容的超时时间（秒）"),
-                type=ParameterType.NUMBER,
-                required=False,
-                default=300,
-                min=-1,
-                max=86400,
-            )
-        ]
-        
-        existing_names = {p.name for p in entity.parameter_rules}
-        for p in timeout_params:
-            if p.name not in existing_names:
-                entity.parameter_rules.append(p)
 
         structured_output_support = credentials.get("structured_output_support", "not_supported")
         if structured_output_support == "supported":
@@ -445,21 +357,6 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         # translates it into a standard OpenAI-compatible request by:
         # 1. Injecting the JSON schema directly into the system prompt to guide the model.
         # This ensures models like gpt-4o produce the correct structured output.
-        c_timeout = int(model_parameters.pop("connect_timeout", 10) or 10)
-        r_timeout = int(model_parameters.pop("read_timeout", 300) or 300)
-
-        # 转换 -1 为 None (requests 规范)
-        connect_timeout = None if c_timeout == -1 else c_timeout
-        read_timeout = None if r_timeout == -1 else r_timeout
-        
-        # 构造超时元组
-        timeout_tuple = (connect_timeout, read_timeout)
-
-        # 这里不使用 httpx，直接利用 openai 客户端的 timeout 属性
-        # OpenAI SDK 的 client 允许在调用时设置 timeout
-        if hasattr(self, 'client'):
-            self.client.timeout = timeout_tuple   
-        
         if model_parameters.get("response_format") == "json_schema":
             # Use .get() instead of .pop() for safety
             json_schema_str = model_parameters.get("json_schema")
