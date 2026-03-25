@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from dify_plugin.errors.model import CredentialsValidateFailedError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
+from models.common_openai import build_openai_timeout, build_validate_timeout, resolve_read_timeout
 from models.llm.llm import OpenAILargeLanguageModel
 
 
@@ -109,6 +110,19 @@ class TestValidateCredentials(unittest.TestCase):
         with self.assertRaises(CredentialsValidateFailedError):
             self.model.validate_credentials("test-model", self.base_credentials)
 
+    @patch.object(OpenAILargeLanguageModel, "_retry_with_configured_timeout")
+    @patch.object(OAICompatLargeLanguageModel, "validate_credentials")
+    def test_timeout_error_retries_with_configured_timeout(self, mock_super_validate, mock_retry):
+        """Test that timeout errors retry via plugin-managed timeout settings."""
+        mock_super_validate.side_effect = CredentialsValidateFailedError(
+            "HTTPConnectionPool(host='10.2.0.68', port=1234): Read timed out."
+        )
+        mock_retry.return_value = None
+
+        self.model.validate_credentials("test-model", self.base_credentials)
+
+        mock_retry.assert_called_once_with("test-model", self.base_credentials)
+
 
 class TestRetryWithThinkingDisabled(unittest.TestCase):
     """Tests for _retry_with_thinking_disabled method."""
@@ -204,6 +218,51 @@ class TestRetryWithThinkingDisabled(unittest.TestCase):
 
         call_url = mock_post.call_args.args[0] if mock_post.call_args.args else mock_post.call_args[0][0]
         self.assertIn("chat/completions", call_url)
+
+    @patch("models.llm.llm.requests.post")
+    def test_retry_uses_custom_read_timeout(self, mock_post):
+        """Test that retry requests reuse configurable read timeout."""
+        resp = MagicMock()
+        resp.status_code = 200
+        mock_post.return_value = resp
+
+        credentials = {**self.base_credentials, "read_timeout": "7200"}
+        self.model._retry_with_thinking_disabled("test-model", credentials)
+
+        self.assertEqual(mock_post.call_args.kwargs.get("timeout"), (10.0, 7200.0))
+
+    @patch("models.llm.llm.requests.post")
+    def test_retry_supports_unlimited_read_timeout(self, mock_post):
+        """Test that -1 maps to no read timeout for validation retries."""
+        resp = MagicMock()
+        resp.status_code = 200
+        mock_post.return_value = resp
+
+        credentials = {**self.base_credentials, "read_timeout": "-1"}
+        self.model._retry_with_thinking_disabled("test-model", credentials)
+
+        self.assertEqual(mock_post.call_args.kwargs.get("timeout"), (10.0, None))
+
+
+class TestReadTimeoutHelpers(unittest.TestCase):
+    def test_resolve_read_timeout_defaults(self):
+        self.assertEqual(resolve_read_timeout({}), 300.0)
+
+    def test_resolve_read_timeout_supports_negative_one_as_none(self):
+        self.assertIsNone(resolve_read_timeout({"read_timeout": "-1"}))
+
+    def test_build_openai_timeout_uses_custom_read_timeout(self):
+        timeout = build_openai_timeout({"read_timeout": "7200"})
+        self.assertEqual(timeout.read, 7200.0)
+        self.assertEqual(timeout.connect, 5.0)
+        self.assertEqual(timeout.write, 10.0)
+
+    def test_build_openai_timeout_supports_unlimited_read_timeout(self):
+        timeout = build_openai_timeout({"read_timeout": "-1"})
+        self.assertIsNone(timeout.read)
+
+    def test_build_validate_timeout_supports_unlimited_read_timeout(self):
+        self.assertEqual(build_validate_timeout({"read_timeout": "-1"}), (10.0, None))
 
 
 if __name__ == "__main__":

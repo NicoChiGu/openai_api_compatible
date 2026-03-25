@@ -136,6 +136,22 @@ model_credential_schema:
       placeholder:
         zh_Hans: 在此输入您的模型上下文长度
         en_US: Enter your Model context size
+    - variable: read_timeout
+      label:
+        zh_Hans: 读取超时（秒）
+        en_US: Read timeout (seconds)
+      required: false
+      show_on:
+        - variable: __model_type
+          value: llm
+      type: text-input
+      default: "300"
+      placeholder:
+        zh_Hans: 输入读取超时秒数，-1 表示不限制
+        en_US: Enter read timeout in seconds, use -1 for no timeout
+      help:
+        zh_Hans: 控制 LLM 请求的读取超时时间。默认 300 秒，设置为 -1 表示禁用 read timeout（按 null 处理）。
+        en_US: Controls the read timeout for LLM requests. Default is 300 seconds. Set to -1 to disable the read timeout (treated as null).
     - variable: context_size
       label:
         zh_Hans: 模型上下文长度

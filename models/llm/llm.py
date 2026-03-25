@@ -25,6 +25,7 @@ from dify_plugin.errors.model import CredentialsValidateFailedError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 from openai import OpenAI
+from models.common_openai import build_openai_timeout, build_validate_timeout
 
 
 class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
@@ -60,9 +61,6 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
             output = content_piece
 
         return output, is_reasoning
-
-    # Timeout for validation requests: (connect_timeout, read_timeout) in seconds
-    _VALIDATE_TIMEOUT = (10, 7200)
 
     @staticmethod
     def _needs_max_completion_tokens(m: str) -> bool:
@@ -102,6 +100,7 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
             return super().validate_credentials(model, credentials)
         except CredentialsValidateFailedError as e:
             msg = str(e)
+            msg_lower = msg.lower()
 
             # --- Retry path 1: token parameter incompatibility ---
             should_retry_floor = (
@@ -120,6 +119,16 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
                 self._retry_with_thinking_disabled(model, credentials)
                 return
 
+            # --- Retry path 3: SDK/default timeout too short for long-prefill models ---
+            should_retry_timeout = (
+                "timed out" in msg_lower
+                or "read timeout" in msg_lower
+                or "httpconnectionpool" in msg_lower
+            )
+            if should_retry_timeout:
+                self._retry_with_configured_timeout(model, credentials)
+                return
+
             # Propagate unrelated validation errors
             raise
 
@@ -131,7 +140,12 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
 
         api_key = credentials.get("api_key")
         extra_headers = credentials.get("extra_headers") or {}
-        client = OpenAI(api_key=api_key, base_url=endpoint_url, default_headers=extra_headers)
+        client = OpenAI(
+            api_key=api_key,
+            base_url=endpoint_url,
+            default_headers=extra_headers,
+            timeout=build_openai_timeout(credentials),
+        )
 
         endpoint_model = credentials.get("endpoint_model_name") or model
         mode = credentials.get("mode", "chat")
@@ -173,6 +187,23 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
     def _retry_with_thinking_disabled(self, model: str, credentials: dict) -> None:
         """Retry validation with thinking explicitly disabled for APIs
         that enforce thinking-mode parameters (e.g., Poe API)."""
+        self._validate_with_requests(
+            model=model,
+            credentials=credentials,
+            extra_data={"thinking": {"type": "disabled"}},
+        )
+
+    def _retry_with_configured_timeout(self, model: str, credentials: dict) -> None:
+        """Retry validation with plugin-managed timeout settings."""
+        self._validate_with_requests(model=model, credentials=credentials)
+
+    def _validate_with_requests(
+        self,
+        model: str,
+        credentials: dict,
+        extra_data: Optional[dict] = None,
+    ) -> None:
+        """Validate credentials via direct HTTP request using configurable timeout."""
         headers = {"Content-Type": "application/json"}
 
         api_key = credentials.get("api_key")
@@ -186,11 +217,22 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         # The `or 5` fallback handles cases where the credential value is set
         # but empty (e.g., "" or None from user input).
         validate_max_tokens = int(credentials.get("validate_credentials_max_tokens", 5) or 5)
+        endpoint_model = credentials.get("endpoint_model_name", model)
+        param_pref = credentials.get("token_param_name", "auto")
+        use_max_completion = (
+            param_pref == "max_completion_tokens"
+            or (param_pref == "auto" and self._needs_max_completion_tokens(endpoint_model))
+        )
         data: dict = {
-            "model": credentials.get("endpoint_model_name", model),
-            "max_tokens": validate_max_tokens,
-            "thinking": {"type": "disabled"},
+            "model": endpoint_model,
         }
+        if use_max_completion:
+            data["max_completion_tokens"] = validate_max_tokens
+        else:
+            data["max_tokens"] = validate_max_tokens
+
+        if extra_data:
+            data.update(extra_data)
 
         completion_type = LLMMode.value_of(credentials["mode"])
 
@@ -206,7 +248,7 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         try:
             response = requests.post(
                 endpoint_url, headers=headers, json=data,
-                timeout=self._VALIDATE_TIMEOUT,
+                timeout=build_validate_timeout(credentials),
             )
             if response.status_code != 200:
                 self._raise_credentials_error(response)
