@@ -62,7 +62,7 @@ class OpenAILargeLanguageModel(OAICompatLargeLanguageModel):
         return output, is_reasoning
 
     # Timeout for validation requests: (connect_timeout, read_timeout) in seconds
-    _VALIDATE_TIMEOUT = (10, 3600)
+    _VALIDATE_TIMEOUT = (10, 7200)
 
     @staticmethod
     def _needs_max_completion_tokens(m: str) -> bool:
